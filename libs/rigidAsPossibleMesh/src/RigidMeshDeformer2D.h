@@ -1,7 +1,8 @@
 #ifndef __RMSIMPLICIT_RIGID_MESH_DEFORMER_2D_H__
 #define __RMSIMPLICIT_RIGID_MESH_DEFORMER_2D_H__
 
-
+#define DllImport   __declspec( dllimport )
+#define DllExport   __declspec( dllexport )
 
 #define WML_ITEM 
 #include <map>
@@ -13,14 +14,32 @@
 #include "ofMain.h"
 #include "opencv2/opencv.hpp"
 
+#include "cula.h"
+
+
 //Vertex ?
 
-namespace rmsmesh {
-	
-	
+namespace rmsmesh
+{
+
 	class RigidMeshDeformer2D
 	{
+
 	public:
+		//*
+		static float A[800*800];
+		static float S[800];
+		static float U[800*800];
+		static float VT[800*800];
+		//*/
+
+		/*
+		float * A;
+		float * S;
+		float * U;
+		float * VT;
+		//*/
+	
 		RigidMeshDeformer2D( );
 		~RigidMeshDeformer2D() {};
 		
@@ -110,6 +129,8 @@ namespace rmsmesh {
 		
 		cv::SVD m_mSVDDecompX, m_mSVDDecompY;
 		Wml::LinearSystemExtd::LUData m_mLUDecompX, m_mLUDecompY;
+
+		Wml::GMatrixd m_GPU_SVD_X, m_GPU_SVD_Y;
 		
 		void PrecomputeOrientationMatrix();
 		void PrecomputeScalingMatrices( unsigned int nTriangle );
@@ -121,9 +142,31 @@ namespace rmsmesh {
 		
 		ofVec2f GetInitialVert( unsigned int nVert ) 
 		{ return ofVec2f( m_vInitialVerts[ nVert ].vPosition.x, m_vInitialVerts[ nVert ].vPosition.y ); }
+
+
+		/* Bryce functions */
+
+		public:
+
+		// Computes least squares solution matrix for any right hand side b.
+		void gpuSVD(cv::Mat wmatrix, cv::SVD * output);
+
+		void checkStatus(culaStatus status);
+		void printMat(cv::Mat input);
+
+		// Transforms a double prescision array into a single prescision array.
+		inline void static copyDoubleToFloat(double * in, float * out, int len);
+
+		// Transforms a single prescision array into a double prescision array.
+		inline void static copyFloatToDouble(float * in, double * out, int len);
+
+		// Sets a block of memory to the identity.
+		inline void static setToIdentity(float * mat, int size);
+
+		// Requires a float array that will be transposed and mapped to the given destenation matrix.
+		void inline copyMatSpecial(float *, cv::Mat * dest);
 	};
-	
-	
+			
 } // namespace rmsimplicit
 
 

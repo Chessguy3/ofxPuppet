@@ -14,11 +14,15 @@ void ofxPuppet::setup(ofMesh & mesh){
 	needsUpdating = true;
 }
 
-void ofxPuppet::update(){
-	if(needsUpdating) {
+// Updates the mesh if a control point is added or deleted.
+void ofxPuppet::update()
+{
+	if(needsUpdating)
+	{
 		int nConstraints = controlPoints.size();
 		set<unsigned int>::iterator cur(controlPoints.begin()), end(controlPoints.end());
-		while ( cur != end ) {
+		while ( cur != end )
+		{
 			unsigned int nVertex = *cur++;
 			ofVec3f vVertex = deformedMesh.getVertices()[nVertex];
 			deformer.SetDeformedHandle( nVertex, ofVec2f( vVertex.x, vVertex.y ) );

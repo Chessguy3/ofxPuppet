@@ -4,27 +4,118 @@
 #include <WmlMatrix4.h>
 #include "WmlExtTriangleUtils.h"
 #include "rmsdebug.h"
+#include "cula.h"
 
 using namespace rmsmesh;
+
+#define imin(X, Y)  ((X) < (Y) ? (X) : (Y))
 
 cv::Mat toCv(Wml::GVectord& gvec) {
 	return cv::Mat(gvec.GetSize(), 1, CV_64FC1, (double*) gvec);
 }
 
-cv::Mat toCv(Wml::GMatrixd& gmat) {
+cv::Mat toCv(Wml::GMatrixd& gmat)
+{
 	return cv::Mat(gmat.GetRows(), gmat.GetColumns(), CV_64FC1, (double*) gmat);
 }
 
-void invert(Wml::GMatrixd& from, Wml::GMatrixd& to) {
+// Rigid Mesh Deformation Local memory buffers.
+float RigidMeshDeformer2D::A[800*800];
+float RigidMeshDeformer2D::U[800*800];
+float RigidMeshDeformer2D::S[800];
+float RigidMeshDeformer2D::VT[800*800];
+
+void invert(Wml::GMatrixd& from, Wml::GMatrixd& to)
+{
 	cout << "inverting " << from.GetRows() << " x " << from.GetColumns() << endl;
+
+	size_t time_start, time_end;
+	time_start = ofGetElapsedTimeMicros();
+
+	//*
+	int rows = from.GetRows();
+	int cols = from.GetColumns();
+
+	int len = rows*cols;
+
+	// Note that although we are converting from column major to row major ordering and back, it should not matter, because the A^{-1} = ((A^{T})^{-1})
+
+	RigidMeshDeformer2D::copyDoubleToFloat((double*) from, RigidMeshDeformer2D::A, len);
+	
+	RigidMeshDeformer2D::setToIdentity(RigidMeshDeformer2D::U, rows);
+
+	int i[800];
+	culaSgesv(rows, rows, RigidMeshDeformer2D::A, rows, i, RigidMeshDeformer2D::U, rows);
+	
+	RigidMeshDeformer2D::copyFloatToDouble(RigidMeshDeformer2D::U, (double *) to, len);
+
+	//*/
+
+	/*
 	cv::Mat fromMat = toCv(from), toMat = toCv(to);
 	cv::invert(fromMat, toMat, cv::DECOMP_LU); // LU is 3x as fast as CHOLESKY
-	cout << "inverted" << endl;
+	//*/	
+
+	time_end = ofGetElapsedTimeMicros();
+
+	cout << "inverted. elapsed time = " << time_end - time_start  << endl;
 }
+
+inline void RigidMeshDeformer2D::copyDoubleToFloat(double * in, float * out, int len)
+{
+	for(int i = 0; i < len; i++)
+	{
+		out[i] = (float)in[i];
+	}
+}
+
+inline void RigidMeshDeformer2D::copyFloatToDouble(float * in, double * out, int len)
+{
+	for(int i = 0; i < len; i++)
+	{
+		out[i] = (double)in[i];
+	}
+}
+
+inline void RigidMeshDeformer2D::setToIdentity(float * mat, int size)
+{
+	int index = 0;
+
+	for(int r = 0; r < size; r++)
+	for(int c = 0; c < size; c++)
+	{
+		if(r == c)
+		{
+			mat[index] = 1;
+		}
+		else
+		{
+			mat[index] = 0;
+		}
+
+		index++;
+	}
+}
+
+
 	
 RigidMeshDeformer2D::RigidMeshDeformer2D()
 {
 	InvalidateSetup();
+
+	/*
+	int M = 400;
+	int N = 400;
+
+	int LDU = 400;
+	int LDVT = 400; 
+
+	A = (float*)malloc(M*N*sizeof(float));
+    S = (float*)malloc(imin(M,N)*sizeof(float));
+    U = (float*)malloc(LDU*M*sizeof(float));
+    VT = (float*)malloc(LDVT*N*sizeof(float));
+	*/
+
 }
 
 void RigidMeshDeformer2D::SetDeformedHandle( unsigned int nHandle, const ofVec2f & vHandle )
@@ -119,7 +210,6 @@ void RigidMeshDeformer2D::InitializeFromMesh( ofMesh * pMesh )
 	
     
     // TODO here?
-    
 
 	// copy triangles
 	unsigned int nTris = pMesh->getIndices().size() / 3;
@@ -323,7 +413,7 @@ void RigidMeshDeformer2D::ValidateSetup()
 
 
 
-
+// Precomputations enable real time animation.
 void RigidMeshDeformer2D::PrecomputeFittingMatrices()
 {
 	// put constraints into vector (will be useful)
@@ -444,19 +534,194 @@ void RigidMeshDeformer2D::PrecomputeFittingMatrices()
 		DebugBreak();
 	 */
 	
+	// -- Precompute the Singular value decomposition.
+
+	// CPU.
 	cout << "SVD decomposition" << endl;
-	m_mSVDDecompX(toCv(m_mHXPrime));
-	m_mSVDDecompY(toCv(m_mHYPrime));
-	cout << "done decomposing" << endl;
+	size_t time_start = ofGetElapsedTimeMicros();
+
+	
+	int rows    = m_mHXPrime.GetRows();
+	int columns = m_mHXPrime.GetColumns();
+
+	//cv::Mat m1 = cv::Mat(rows, columns, CV_64F, double(0));
+	
+	//m_mSVDDecompX(toCv(m_mHXPrime));
+	//m_mSVDDecompY(toCv(m_mHYPrime));
+	
+	size_t time_end = ofGetElapsedTimeMicros();
+	cout << "CPU Decomposition Time Elapsed : " << time_end - time_start << endl;
+	//*/
+
+	// GPU.
+	cout << "GPU SVD decomposition" << endl;
+	time_start = ofGetElapsedTimeMicros();
+	
+	gpuSVD(toCv(m_mHXPrime), &m_mSVDDecompX);
+	gpuSVD(toCv(m_mHYPrime), &m_mSVDDecompY);
+	
+	time_end = ofGetElapsedTimeMicros();	
+	cout << "GPU Decomposition Time Elapsed : " << time_end - time_start << endl;
+	
 }
 
+// Computes least squares solution matrix for any right hand side b.
+// Should work for square matrices.
+void RigidMeshDeformer2D::gpuSVD(cv::Mat wmatrix, cv::SVD * output)
+{
+
+	/* Declare all the necessary variables */
+
+	/* Dimensions of matrices */
+	int rows    = wmatrix.rows;
+	int columns = wmatrix.cols;
+	int len = rows*columns;
+
+	int M = rows;
+    int N = columns;
+
+	culaStatus status;
+    
+    /* Setup SVD Parameters */
+    int LDA = M;
+    int LDU = M;
+    int LDVT = N;
+   
+	/*
+    float* A = NULL;
+    float* S = NULL;
+    float* U = NULL;
+    float* VT = NULL;
+	*/
+
+    char jobu  = 'A';
+    char jobvt = 'A';
+
+	// Create matrices.
+	
+	/*
+    A = (float*)malloc(M*N*sizeof(float));
+    S = (float*)malloc(imin(M,N)*sizeof(float));
+    U = (float*)malloc(LDU*M*sizeof(float));
+    VT = (float*)malloc(LDVT*N*sizeof(float));
+	*/
+	
+	/* Memory allocation failed */
+	
+    if(!A || !S || !U || !VT) 
+    {
+        free(A);
+        free(U);
+        free(S);
+        free(VT);
+
+        return;
+    }
+	
+
+	// Populate the initial matrix with the input matrix data.
+	for(int r = 0; r < rows; r++)
+	for(int c = 0; c < columns; c++)
+	{
+		int index = c*columns + r;
+
+		culaFloat temp = wmatrix.at<double>(r, c);
+		A[index] = temp;
+	}
+
+	/* Initialize CULA */
+   
+	/*
+	status = culaInitialize();
+    checkStatus(status);
+	*/
+		
+	size_t time_start, time_end;
+
+	time_start = ofGetElapsedTimeMicros();
+
+    /* Perform singular value decomposition CULA */
+    status = culaSgesvd(jobu, jobvt, M, N, A, LDA, S, U, LDU, VT, LDVT);
+    checkStatus(status);
+
+	time_end = ofGetElapsedTimeMicros();
+	cout << "GPU_TIME = " << time_end - time_start << endl;
+	    
+	// Shut douwn Cula.
+    //culaShutdown();
+
+	// Double prescision resizing.
+	output -> u.create(rows, rows, CV_64F);
+	output -> w.create(1, columns, CV_64F);
+	output -> vt.create(columns, columns, CV_64F);
+
+	// Populate the openCV output structure.
+	
+	copyMatSpecial(U, &(output -> u));
+	copyMatSpecial(VT, &(output -> vt));
+	copyMatSpecial(S, &(output -> w));
+	
+    /* Free the memory. */
+	
+	/*
+	free(A);
+    free(U);
+    free(S);
+    free(VT);
+	*/
+
+	return;
+}
+
+// Requires a float array that will be transposed and mapped to the given destenation matrix.
+inline void RigidMeshDeformer2D::copyMatSpecial(float * A, cv::Mat * dest)
+{
+	
+	int rows = dest -> rows;
+	int cols = dest -> cols;
+
+	for(int r = 0; r < rows; r++)
+	for(int c = 0; c < cols; c++)
+	{
+		int i1 = c*rows + r;
+		dest -> at<double>(r, c) = A[i1];
+	}
+}
+
+void RigidMeshDeformer2D::printMat(cv::Mat input)
+{
+	printf("Printing matrix\n");
+	int rows = input.rows;
+	int cols = input.cols;
+
+	for(int r = 0; r < rows; r++)
+	for(int c = 0; c < cols; c++)
+	{
+		printf("Row = %d, Col = %d, val = %f\n", r, c, input.at<double>(r, c));
+	}
+
+	printf("\n");
+
+}
+
+/* Check for errors and exit if one occurred */
+void RigidMeshDeformer2D::checkStatus(culaStatus status)
+{
+    char buf[256];
+
+    if(!status)
+        return;
+
+    culaGetErrorInfoString(status, culaGetErrorInfo(), buf, sizeof(buf));
+    printf("%s\n", buf);
+
+    culaShutdown();
+    exit(EXIT_FAILURE);
+}
 
 void RigidMeshDeformer2D::ApplyFittingStep()
 {
-	
-	
-	
-	
+		
 	// put constraints into vector (will be useful)
 	std::vector<Constraint> vConstraintsVec;
 	std::set<Constraint>::iterator cur(m_vConstraints.begin()), end(m_vConstraints.end());
@@ -529,6 +794,9 @@ void RigidMeshDeformer2D::ApplyFittingStep()
 	 */
 	cv::Mat vRHSXMat = toCv(vRHSX), vSolutionXMat= toCv(vSolutionX);
 	m_mSVDDecompX.backSubst(vRHSXMat, vSolutionXMat);
+
+	// Bryce Line.
+	//vSolutionXMat = toCv(m_GPU_SVD_X * vRHSX);
 	
 	// now for Y
 	Wml::GVectord vRHSY( m_mDY * vQY );
@@ -543,6 +811,9 @@ void RigidMeshDeformer2D::ApplyFittingStep()
 	 */
 	cv::Mat vRHSYMat = toCv(vRHSY), vSolutionYMat = toCv(vSolutionY);
 	m_mSVDDecompY.backSubst(vRHSYMat, vSolutionYMat);
+
+	// Bryce Line.
+	//vSolutionYMat = toCv(m_GPU_SVD_Y * vRHSY);
 	
 	// done!
 	for ( unsigned int i = 0; i < nVerts; ++i ) {
